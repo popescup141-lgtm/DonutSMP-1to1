@@ -1,0 +1,261 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#                         FoliaHopper  ·  configuration
+#
+#      Edit a value, then run  /fh reload   (no server restart needed)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#   CONTENTS
+#     1  Speed ................ tick-cooldown, batch-size
+#     2  Containers ........... transfer
+#     3  Retry delay .......... blocked-retry-cycles
+#     4  Debug ................ debug
+#     5  TPS protection ....... tps-throttle
+#     6  Chunk protection ..... chunk-heat
+#     7  Special blocks ....... special-blocks
+#     8  Hoppers at specials .. vanilla-hoppers-at-special-blocks
+#     9  Item sorters ......... vanilla-hoppers-at-comparators
+#    10  Sorter fast mode ..... sorter-fast-mode
+#    11  Special-block speed .. special-handling
+#
+#   SPEED CHEAT SHEET  (one hopper, 20 TPS, with the values in this file)
+#     ┌───────────────────────────────────────┬───────────┬────────────────┐
+#     │ Normal chests / barrels / hoppers     │  40 /sec  │  16x vanilla   │
+#     │ Special blocks handled by the plugin  │  40 /sec  │  16x vanilla   │
+#     │ Sorter hoppers (sorter-fast-mode)     │  10 /sec  │   4x vanilla   │
+#     │ Vanilla Minecraft hopper              │ 2.5 /sec  │      1x        │
+#     └───────────────────────────────────────┴───────────┴────────────────┘
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  1 · SPEED
+# ───────────────────────────────────────────────────────────────────────────────
+#  tick-cooldown : ticks between transfer attempts per hopper  (20 ticks = 1 second)
+#                  lower = faster, but more server load
+#  batch-size    : most items moved per attempt
+#
+#  Now: 16 items every 8 ticks = 40 items/sec per hopper.
+# ───────────────────────────────────────────────────────────────────────────────
+tick-cooldown: 8
+batch-size: 12
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  2 · CONTAINERS  -  which blocks use FoliaHopper's fast transfer
+# ───────────────────────────────────────────────────────────────────────────────
+#  use-allowed-types    true  = only the blocks in batch-allowed-types are fast
+#                       false = every block FoliaHopper supports is fast
+#
+#  batch-allowed-types  Names are GROUPS: an entry matches every block whose name
+#                       equals it or ends with it.
+#
+#                         CHEST          chests, trapped chests, ALL copper chests,
+#                                        chest minecarts
+#                         COPPER_CHEST   copper chests only (any oxidation, waxed or not)
+#                         SHULKER_BOX    shulker boxes of every colour
+#                         HOPPER         hoppers and hopper minecarts
+#                         FURNACE        furnaces and blast furnaces
+#
+#  Supported: CHEST, TRAPPED_CHEST, COPPER_CHEST, BARREL, HOPPER, SHULKER_BOX,
+#             CRAFTER, DROPPER, DISPENSER, FURNACE, BLAST_FURNACE, SMOKER,
+#             CHEST_MINECART, HOPPER_MINECART
+#
+#  Anything not listed is not bulk-moved. Special blocks (composter, brewing stand,
+#  shelves ...) follow their own rules in section 7; chest boats and other blocks
+#  stay with normal Minecraft hoppers.
+# ───────────────────────────────────────────────────────────────────────────────
+transfer:
+  use-allowed-types: true
+  batch-allowed-types:
+  - CHEST
+  - TRAPPED_CHEST
+  - COPPER_CHEST
+  - BARREL
+  - HOPPER
+  - SHULKER_BOX
+  - CRAFTER
+  - DROPPER
+  - DISPENSER
+  - FURNACE
+  - BLAST_FURNACE
+  - SMOKER
+  - CHEST_MINECART
+  - HOPPER_MINECART
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  3 · RETRY DELAY
+# ───────────────────────────────────────────────────────────────────────────────
+#  blocked-retry-cycles : after a push or pull moves nothing (target full, source
+#                         empty), skip this many cycles before trying that direction
+#                         again.   0 = retry every cycle.
+#
+#  Wait = blocked-retry-cycles x tick-cooldown   (now 2 x 8 = 16 ticks = 0.8 s)
+# ───────────────────────────────────────────────────────────────────────────────
+blocked-retry-cycles: 2
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  4 · DEBUG
+# ───────────────────────────────────────────────────────────────────────────────
+#  debug : write every bulk transfer to the console.
+#          Very noisy - keep false unless you are hunting a problem.
+# ───────────────────────────────────────────────────────────────────────────────
+debug: false
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  5 · TPS PROTECTION  -  slow hoppers down when the server lags
+# ───────────────────────────────────────────────────────────────────────────────
+#  enabled     false = never throttle on TPS
+#  threshold   TPS where throttling starts. Above it: full speed. Below it the
+#              batch shrinks smoothly towards zero at halt-below.
+#  halt-below  at or under this TPS all bulk transfers stop completely
+#
+#  Example  (threshold 18 · halt-below 16 · batch-size 16):
+#
+#        TPS    20   18   17   16
+#        items  16   16    8    0
+#               full  ^start     ^halt
+#
+#  Only bulk transfers (section 2) are throttled. The small one-item moves of
+#  sorter-fast-mode and special-handling are not.
+# ───────────────────────────────────────────────────────────────────────────────
+tps-throttle:
+  enabled: true
+  threshold: 18.0
+  halt-below: 16.0
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  6 · CHUNK PROTECTION  -  cool down hot-spot chunks
+# ───────────────────────────────────────────────────────────────────────────────
+#  Counts the items each chunk moves in a sliding window. Hoppers in a chunk that
+#  goes over the threshold get a smaller batch-size.
+#
+#  enabled           false = never throttle by chunk
+#  window-seconds    length of the sliding window
+#  threshold         items moved inside the window that triggers throttling
+#                    (10000 is very permissive - lower it to throttle sooner)
+#  min-batch-factor  smallest batch multiplier at maximum heat
+#                    (0.25 = batch shrinks to at most 25 % of normal)
+# ───────────────────────────────────────────────────────────────────────────────
+chunk-heat:
+  enabled: true
+  window-seconds: 10
+  threshold: 10000
+  min-batch-factor: 0.25
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  7 · SPECIAL BLOCKS  -  one rule per block
+# ───────────────────────────────────────────────────────────────────────────────
+#  NAME: true     leave this block (and the hopper touching it) to normal Minecraft
+#  NAME: plugin   FoliaHopper handles hoppers at this block itself, faster than
+#                 vanilla. Works for: COMPOSTER, BREWING_STAND, DECORATED_POT,
+#                 CHISELED_BOOKSHELF, SHELF  (other names behave like true)
+#  NAME: false    stop forcing vanilla for this block
+#
+#  "plugin" moves ONE item at a time and follows the block's vanilla rules:
+#
+#    composter ............ in: from a hopper ABOVE, compostable items, chance based
+#                           out: bone meal, taken by a hopper BELOW
+#                           (level 7 -> 8 happens at once, not 1 second later)
+#    brewing stand ........ from above: ingredient slot only
+#                           from a side: bottles (empty slots) + blaze powder fuel
+#                           pulling: bottles and empty glass bottles only
+#    decorated pot, shelf . plain slot-by-slot insert and extract
+#    chiseled bookshelf ... books only, one per empty slot
+#
+#  A NAME matches a block whose name equals it or ends with _NAME
+#  (SHELF also matches OAK_SHELF, SPRUCE_SHELF ...). You can add any block.
+#  HOPPER is ignored here on purpose - use section 9 for hopper chains.
+#  A hopper with a comparator beside it is always a sorter hopper, never a
+#  "plugin" hopper.
+#
+#  Back to pure vanilla at any time: set the block to true, then /fh reload.
+# ───────────────────────────────────────────────────────────────────────────────
+special-blocks:
+  # handled by FoliaHopper (fast)
+  COMPOSTER: plugin
+  BREWING_STAND: plugin
+  DECORATED_POT: plugin
+  CHISELED_BOOKSHELF: plugin
+  SHELF: plugin
+  
+  # left to normal Minecraft
+  JUKEBOX: true
+  LECTERN: true
+  CAMPFIRE: true
+  SOUL_CAMPFIRE: true
+  BEEHIVE: true
+  BEE_NEST: true
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  8 · HOPPERS AT SPECIAL BLOCKS
+# ───────────────────────────────────────────────────────────────────────────────
+#  Applies to the blocks set to  true  in section 7.
+#
+#  true   A hopper that pulls FROM such a block (the block above it) or pushes
+#         INTO one (the block it faces) is left 100 % to normal Minecraft: no
+#         FoliaHopper task, no cancelled vanilla moves. It runs at vanilla speed
+#         on BOTH sides (set in spigot.yml: ticks-per.hopper-transfer and
+#         hopper-amount).
+#  false  Only the special block itself is left alone; the hopper stays a
+#         FoliaHopper hopper for its other side.
+# ───────────────────────────────────────────────────────────────────────────────
+vanilla-hoppers-at-special-blocks: true
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  9 · ITEM SORTERS  -  keeps automatic sorters working
+# ───────────────────────────────────────────────────────────────────────────────
+#  true   A hopper with a comparator right beside it (N/E/S/W), and any hopper
+#         that feeds into it or pulls from it, is a sorter hopper: it is left to
+#         normal Minecraft, or driven by section 10. Plain hopper chains without
+#         comparators stay fast.
+#  false  Never treat comparators specially.
+#
+#  Only comparators touching the hopper are detected (not ones reading it
+#  through a solid block).
+# ───────────────────────────────────────────────────────────────────────────────
+vanilla-hoppers-at-comparators: true
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  10 · SORTER FAST MODE  -  EXPERIMENTAL   (currently ON)
+# ───────────────────────────────────────────────────────────────────────────────
+#  Sorter hoppers normally run at pure vanilla speed. With this on, FoliaHopper
+#  drives them itself and copies vanilla rules:
+#     - ONE item per move (never a batch), first usable slot first
+#     - only into / out of hoppers, chests, barrels and shulker boxes
+#       (anything else stays vanilla)
+#     - nothing moves while the hopper is locked by redstone
+#
+#  enabled          false = pure vanilla sorters
+#  moves-per-cycle  moves per cycle, 1-4. One cycle every tick-cooldown ticks.
+#
+#  Now: 4 moves every 8 ticks = 10 items/sec (4x vanilla). 1 move per cycle
+#  would be the same speed as vanilla.
+#  Sorters that rely on exact timing can break when sped up - if one misbehaves,
+#  lower moves-per-cycle to 1, or set enabled: false.
+# ───────────────────────────────────────────────────────────────────────────────
+sorter-fast-mode:
+  enabled: true
+  moves-per-cycle: 4
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+#  11 · SPECIAL-BLOCK SPEED  -  hoppers at blocks set to "plugin" (section 7)
+# ───────────────────────────────────────────────────────────────────────────────
+#  moves-per-cycle : single-item moves per cycle, 1-16. One cycle every
+#                    tick-cooldown ticks.
+#
+#  Now: 16 moves every 8 ticks = 40 items/sec (vanilla: 2.5 items/sec).
+# ───────────────────────────────────────────────────────────────────────────────
+special-handling:
+  moves-per-cycle: 16
